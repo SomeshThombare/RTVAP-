@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vehicle_analytics
+      POSTGRES_USER: vehicle
+      POSTGRES_PASSWORD: vehicle_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vehicle -d vehicle_analytics"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mediamtx:
+    image: bluenviron/mediamtx:1
+    ports:
+      - "8554:8554"
+      - "8888:8888"
+      - "8889:8889"
+
+volumes:
+  postgres_data:
