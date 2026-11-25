@@ -210,6 +210,8 @@ async def event_stream():
     async def stream():
         queue: asyncio.Queue = app.state.new_events
         heartbeat_at = time.monotonic()
+        # Send an initial comment so browsers and reverse proxies recognize the stream immediately.
+        yield ": connected\n\n"
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=1)

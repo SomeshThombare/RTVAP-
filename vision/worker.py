@@ -276,8 +276,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", type=Path, default=ROOT / "models" / "object_detection_yolox_2022nov_int8bq.onnx")
     parser.add_argument("--api", default=os.getenv("API_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--camera-id", default="camera-01")
-    parser.add_argument("--line-orientation", choices=("vertical", "horizontal"), default="vertical")
-    parser.add_argument("--line-ratio", type=float, default=0.5)
+    # Calibrated to the bundled top-down traffic clip; override for other cameras.
+    parser.add_argument("--line-orientation", choices=("vertical", "horizontal"), default="horizontal")
+    parser.add_argument("--line-ratio", type=float, default=0.34)
     parser.add_argument("--device-id", type=int, default=1, help="DirectML adapter index; GPU 1 is the GTX 1650 on this laptop")
     parser.add_argument("--confidence", type=float, default=0.32)
     parser.add_argument("--max-frames", type=int, default=0, help="Optional cap; 0 processes the whole clip")

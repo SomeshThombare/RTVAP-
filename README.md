@@ -13,6 +13,22 @@ The assignment brief says its contents and the resulting work are for recruitmen
 - A responsive React dashboard with totals, direction counts, color breakdown, recent events, and live updates.
 - Docker Compose definitions for PostgreSQL and MediaMTX.
 
+## Assignment requirement status
+
+| Assignment requirement | Current implementation | Status |
+|---|---|---|
+| MediaMTX accepts and distributes RTSP | A MediaMTX service is defined in Compose, but no MP4-to-RTSP publish/playback run has been completed. The current worker reads MP4 directly. | Not demonstrated |
+| DeepStream primary vehicle detector | OpenCV runs an ONNX YOLOX vehicle detector. No DeepStream `nvinfer`/PGIE pipeline is present. | Prototype substitute only |
+| Required multi-object tracker | A small greedy IoU tracker assigns IDs and supports one crossing per track. It is not DeepStream `nvtracker` and can lose or switch IDs. | Prototype substitute only |
+| Vehicle color secondary classifier | HSV rules estimate color from the center crop. There is no trained SGIE model. | Not met |
+| Boundary crossing | Custom center-point line crossing runs on tracked objects and was exercised with the MP4. | Partially met; not DeepStream analytics |
+| PostgreSQL persistence | Worker posts crossing events to FastAPI; FastAPI writes idempotently to PostgreSQL. The running API reported 8 stored OpenCV events in the midpoint-line run. | Working prototype |
+| React live dashboard | React shows counts, color/direction breakdown, and recent rows. It refreshes by SSE and a 5-second polling fallback. | Working prototype |
+| Optional live video in dashboard | Annotated video is saved as a local MP4, not embedded as a live HLS/WebRTC stream. | Not implemented (bonus) |
+| Private GitHub submission and README | README is maintained locally; the current branch has local commits. No push was made. Keep the repository private as the brief requires. | README present; private submission still pending |
+
+The OpenCV path demonstrates detection, tracking, event persistence, and the dashboard on this laptop. It does not satisfy requirements that explicitly call for DeepStream, `nvtracker`, and a secondary learned color classifier.
+
 ## Architecture
 
 ```text
@@ -32,6 +48,19 @@ MP4/RTSP camera -> MediaMTX -> DeepStream detector -> tracker -> color classifie
 
 The API and database are separated from the event source. A future DeepStream probe can publish the same event fields the simulator currently creates. Database writes use an idempotency key so retries do not create duplicate events. Inference callbacks should hand events to a queue/writer rather than wait on database I/O in the video-processing thread.
 
+### Video model and inference flow
+
+The worker uses OpenCV Zoo's YOLOX-S ONNX detector, specifically `object_detection_yolox_2022nov_int8bq.onnx`. OpenCV Zoo documents this as a block-quantized INT8 model with block size 64; the model directory is Apache 2.0 licensed. Review the [model card and license](https://github.com/opencv/opencv_zoo/blob/main/models/object_detection_yolox/README.md) before redistributing model weights. The model file is intentionally excluded from Git and downloaded locally.
+
+1. **Decode/preprocess:** OpenCV reads an MP4 frame, scales it into a 640 × 640 input, pads it, converts BGR to RGB, and prepares the ONNX tensor.
+2. **Detect:** ONNX Runtime uses DirectML adapter 1 on the observed laptop (confirmed in the worker log). If DirectML initialization fails, it falls back to CPU. The worker keeps COCO class IDs `2 car`, `3 motorcycle`, `5 bus`, and `7 truck`, uses confidence `0.32` by default, then applies class-aware non-maximum suppression.
+3. **Estimate color:** OpenCV examines a central part of each detected vehicle crop in HSV space and assigns a coarse color. This is a hand-written image heuristic, not a learned model or the assignment's secondary classifier. Lighting, shadows, vehicle shape, and paint can affect it.
+4. **Track:** A greedy IoU matcher associates same-class boxes (`0.18` minimum IoU, `12` frame maximum age). IDs exist only within one processing session. This simple tracker can lose or switch IDs during occlusion or missed detections.
+5. **Count:** The worker compares tracked-box centers between frames against one configurable line, and emits at most one event per track. `in`/`out` describe pixel movement across the line, not a calibrated site's traffic direction.
+6. **Persist/display:** A background thread POSTs events to FastAPI. FastAPI writes each event with a unique key to PostgreSQL. React reads metrics and recent records and updates through SSE plus a 5-second polling fallback. Event times are derived from processing start and frame offset/FPS, not a camera capture clock.
+
+For the supplied clip (1280 × 720, 277 frames, about 23.976 FPS), the horizontal midpoint (`y=360`) produced 8 events in the end-to-end database run. A separate offline calibration at `y=244` (`--line-ratio 0.34`) produced 12 crossing tracks: 11 labeled `car` and 1 labeled `bus`. That diagnostic calibration was not inserted into PostgreSQL. These model counts are not human-verified ground truth; the line position and detector/tracker errors affect results.
+
 ### Main folders
 
 ```text
@@ -47,6 +76,8 @@ vision/requirements.txt   Windows vision-only dependencies
 ## Requirements and setup
 
 The observed laptop has Windows with WSL2 Ubuntu 26.04, Python 3.10, Node.js 24, npm 11, Git, PostgreSQL tools, Docker Desktop, 8 GB system RAM, and an NVIDIA GeForce GTX 1650 with 4 GB VRAM. Docker engine availability can vary; the instructions below use the already-working native PostgreSQL setup if Docker is unavailable. The OpenCV worker attempts DirectML adapter 1 (the reported GTX 1650) and falls back to CPU if DirectML cannot initialize. This is not a guarantee of real-time speed.
+
+The OpenCV prototype was verified on Windows. For DeepStream 9.2, NVIDIA's current dGPU guide lists Ubuntu 24.04, GStreamer 1.24.2, driver 595.58.03, CUDA 13.2, and TensorRT 10.16.0.72; its compatibility table lists Turing among supported dGPU architectures. The WSL guide requires Windows 11 with a GeForce/Quadro GPU in WDDM mode and records validation with a newer driver/GPU. This laptop's observed Ubuntu 26.04 and driver 566.36 do not match that documented stack, so do not mark DeepStream as installed or ready based only on `nvidia-smi`. See [NVIDIA DeepStream installation requirements](https://docs.nvidia.com/deepstream/9.2/text/DS_Installation) and [DeepStream on WSL](https://docs.nvidia.com/deepstream/9.2/text/DS_on_WSL2).
 
 ### Start the API, PostgreSQL, and MediaMTX
 
@@ -102,7 +133,8 @@ That keeps the local PostgreSQL volume. To remove local database data as well, u
 - `GET /api/health` reports API/database readiness and current mode.
 - `GET /api/metrics` returns total events and counts by color and direction.
 - `GET /api/events?limit=50` returns recent persisted events (limit 1–200).
-- `GET /api/events/stream` is an SSE stream for newly persisted demo events.
+- `POST /api/events` validates and persists an OpenCV/DeepStream crossing event; `event_key` prevents duplicates.
+- `GET /api/events/stream` is an SSE stream for newly persisted events.
 - Demo mode is on by default. For video inference, set `DEMO_MODE=false` and `ACTIVE_SOURCE=opencv` before starting the API. The dashboard then filters to OpenCV events and marks the color method as heuristic.
 - Valid event sources are `simulated`, `opencv`, and the reserved `deepstream` value. `deepstream` is only a schema/API source label; no DeepStream pipeline is implemented.
 
@@ -146,9 +178,64 @@ This uses the supplied local clip and does not need a camera, MediaMTX, Docker, 
 
 Limitations: the COCO detector only detects vehicle categories learned by its pretrained model; the basic IoU tracker can lose IDs through occlusion; HSV crop color is a rough heuristic, not a secondary learned classifier; one crossing is emitted per track; this is offline MP4 processing rather than RTSP. The GTX 1650 DirectML path may fall back to CPU or be slower than video playback. Model source and usage notes: [OpenCV Zoo YOLOX model README](https://github.com/opencv/opencv_zoo/blob/main/models/object_detection_yolox/README.md).
 
+### Windows Command Prompt (CMD) quick start
+
+The PowerShell examples above use `$env:...`. In **Command Prompt**, use `set` instead. Start PostgreSQL first, then use three terminals from the project folder:
+
+**Terminal 1 — API:**
+
+```cmd
+cd /d "A:\Elstone Tech"
+set DATABASE_URL=postgresql://vehicle:vehicle_dev@localhost:5432/vehicle_analytics
+set DEMO_MODE=false
+set ACTIVE_SOURCE=opencv
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload --port 8000
+```
+
+Keep this terminal open. Confirm `http://localhost:8000/api/health` returns `status: ok`, `database: connected`, and `mode: opencv`.
+
+**Terminal 2 — React dashboard:**
+
+```cmd
+cd /d "A:\Elstone Tech\frontend"
+npm run dev -- --host 0.0.0.0 --port 5174
+```
+
+Open `http://localhost:5174/` and leave the Vite terminal running.
+
+**Terminal 3 — install once, download the model if needed, then process the supplied clip:**
+
+```cmd
+cd /d "A:\Elstone Tech"
+.\.venv\Scripts\python.exe -m pip install --default-timeout=120 --retries 5 -r vision\requirements.txt
+if not exist models mkdir models
+if not exist models\object_detection_yolox_2022nov_int8bq.onnx curl.exe -L "https://github.com/opencv/opencv_zoo/raw/refs/heads/main/models/object_detection_yolox/object_detection_yolox_2022nov_int8bq.onnx" -o models\object_detection_yolox_2022nov_int8bq.onnx
+.\.venv\Scripts\python.exe vision\worker.py --video .\mixkit-cars-driving-by-on-road-2022-hd-ready.mp4 --device-id 1 --line-orientation horizontal --line-ratio 0.34
+```
+
+For another MP4, change the `--video` path and calibrate the line orientation/ratio for that camera view. The database keeps records from each run, so reprocessing the same file adds another set of events. The annotated result is `output\opencv_annotated.mp4`.
+
+### Verified prototype checks (25 Nov 2026)
+
+| Check | Result |
+|---|---|
+| React production build (`npm run build`) | Passed |
+| Python syntax compilation (`py_compile`) | Passed |
+| Docker Compose configuration (`docker compose config --quiet`) | Passed; this validates the YAML/config only, not that containers are running |
+| Dashboard on port 5174 | HTTP 200 |
+| Vite `/api/metrics` proxy | HTTP 200; returned OpenCV metrics |
+| API/database health | `ok`, database connected, mode `opencv` |
+| DirectML model initialization | Passed; worker logged `DirectML adapter 1` on the GTX 1650 |
+| Full supplied clip processing | 277 frames processed; annotated MP4 created |
+| End-to-end crossing persistence | 8 events saved at horizontal midpoint (`line-ratio 0.50`); API metrics confirmed 8 |
+| Event idempotency | Reposting a saved event returned `duplicate: true`; no extra event was inserted |
+| Clip-specific line calibration | Separate offline run at `line-ratio 0.34` found 12 track crossings (11 `car`, 1 `bus`); this diagnostic run did not write to the database |
+
+These checks prove the current OpenCV prototype path. They do not prove DeepStream, RTSP ingest through MediaMTX, the trained secondary color classifier, or production count accuracy.
+
 ## What is still needed for assignment compliance
 
-1. Verify a supported Ubuntu/Jetson DeepStream host, its NVIDIA driver, and compatible SDK/runtime. The local GTX 1650 and Docker CLI alone do not prove this environment is ready.
+1. Verify a supported Ubuntu/Jetson DeepStream host, its NVIDIA driver, and compatible SDK/runtime. The laptop's GTX 1650 uses the Turing architecture, but the observed WSL Ubuntu 26.04 and Windows driver 566.36 do not match the current DeepStream 9.2 setup guide, which lists Ubuntu 24.04 and driver 595.58.03, plus CUDA 13.2 and TensorRT 10.16.0.72. NVIDIA's WSL guide requires Windows 11 and WDDM GeForce/Quadro and currently documents validation on a newer driver/GPU. Recheck the [DeepStream installation requirements](https://docs.nvidia.com/deepstream/9.2/text/DS_Installation) and [DeepStream on WSL guide](https://docs.nvidia.com/deepstream/9.2/text/DS_on_WSL2) before changing the environment. The hardware architecture alone does not guarantee this exact laptop/driver/OS combination is supported or fast enough.
 2. Publish the available traffic MP4 into MediaMTX with FFmpeg, then verify RTSP playback in VLC. The clip is present locally, but FFmpeg/RTSP publication and playback have not been configured.
 3. Implement and validate a primary vehicle detector, `nvtracker`, a secondary color classifier on vehicle crops, and `nvdsanalytics` line crossing (or equivalent DeepStream probe logic).
 4. Connect the DeepStream event probe to a bounded asynchronous writer that calls the event persistence layer, carrying a unique session ID because tracker IDs can reset after restarts.
