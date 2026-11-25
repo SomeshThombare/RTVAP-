@@ -22,12 +22,14 @@ import psycopg
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://vehicle:vehicle_dev@localhost:5433/vehicle_analytics"
 )
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
+ACTIVE_SOURCE = os.getenv("ACTIVE_SOURCE", "simulated" if DEMO_MODE else "opencv")
 DEMO_SESSION = str(uuid.uuid5(uuid.NAMESPACE_DNS, "vehicle-analytics-prototype-demo"))
 COLORS = ["white", "black", "silver", "gray", "blue", "red"]
 VEHICLE_CLASSES = ["car", "truck", "bus", "motorcycle"]
@@ -42,6 +44,11 @@ def connect() -> psycopg.Connection:
 def initialize_database() -> None:
     with connect() as conn:
         conn.execute(SCHEMA)
+        conn.execute("ALTER TABLE crossing_events DROP CONSTRAINT IF EXISTS crossing_events_source_check")
+        conn.execute(
+            "ALTER TABLE crossing_events ADD CONSTRAINT crossing_events_source_check "
+            "CHECK (source IN ('simulated', 'opencv', 'deepstream'))"
+        )
 
 
 def record_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -64,10 +71,26 @@ def record_event(event: dict[str, Any]) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
+def publish_to_live_queue(app: FastAPI, saved: dict[str, Any]) -> None:
+    """Keep live notifications bounded; REST remains the source of truth."""
+    try:
+        app.state.new_events.put_nowait(saved)
+    except asyncio.QueueFull:
+        try:
+            app.state.new_events.get_nowait()
+            app.state.new_events.task_done()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            app.state.new_events.put_nowait(saved)
+        except asyncio.QueueFull:
+            pass
+
+
 async def simulate_events(app: FastAPI) -> None:
     """Demo-only event source so API, PostgreSQL, and UI can be shown together."""
     rng = random.Random()
-    while True:
+    while ACTIVE_SOURCE == "simulated":
         await asyncio.sleep(3)
         event = {
             "event_key": str(uuid.uuid4()),
@@ -79,12 +102,12 @@ async def simulate_events(app: FastAPI) -> None:
             "direction": rng.choice(["in", "out"]),
             "line_id": "gate-01",
             "occurred_at": datetime.now(timezone.utc),
-            "source": "simulated",
+            "source": ACTIVE_SOURCE,
         }
         try:
             saved = await asyncio.to_thread(record_event, event)
             if saved:
-                await app.state.new_events.put(saved)
+                publish_to_live_queue(app, saved)
         except Exception as exc:
             app.state.last_db_error = str(exc)
 
@@ -99,7 +122,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         app.state.db_ready = False
         app.state.last_db_error = str(exc)
-    task = asyncio.create_task(simulate_events(app)) if DEMO_MODE else None
+    task = asyncio.create_task(simulate_events(app)) if ACTIVE_SOURCE == "simulated" else None
     try:
         yield
     finally:
@@ -115,9 +138,38 @@ app = FastAPI(title="Vehicle Analytics Prototype API", version="0.1.0", lifespan
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","),
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+class CrossingEvent(BaseModel):
+    event_key: str = Field(min_length=1, max_length=160)
+    camera_id: str = Field(default="camera-01", min_length=1, max_length=80)
+    session_id: uuid.UUID
+    vehicle_id: str = Field(min_length=1, max_length=120)
+    vehicle_class: str = Field(min_length=1, max_length=40)
+    color: str = Field(min_length=1, max_length=32)
+    direction: str
+    line_id: str = Field(default="gate-01", min_length=1, max_length=80)
+    occurred_at: datetime
+    source: str = "opencv"
+
+
+@app.post("/api/events", status_code=201)
+async def ingest_event(payload: CrossingEvent) -> dict[str, Any]:
+    if payload.direction not in {"in", "out"}:
+        raise HTTPException(422, detail="direction must be 'in' or 'out'")
+    if payload.source not in {"opencv", "deepstream"}:
+        raise HTTPException(422, detail="source must be 'opencv' or 'deepstream'")
+    event = payload.model_dump()
+    if event["occurred_at"].tzinfo is None:
+        event["occurred_at"] = event["occurred_at"].replace(tzinfo=timezone.utc)
+    saved = await asyncio.to_thread(record_event, event)
+    if not saved:
+        return {"duplicate": True, "event_key": event["event_key"]}
+    publish_to_live_queue(app, saved)
+    return saved
 
 
 @app.get("/api/health")
@@ -125,7 +177,7 @@ def health() -> dict[str, Any]:
     try:
         with connect() as conn:
             conn.execute("SELECT 1")
-        return {"status": "ok", "database": "connected", "mode": "demo" if DEMO_MODE else "inference"}
+        return {"status": "ok", "database": "connected", "mode": ACTIVE_SOURCE}
     except Exception as exc:
         raise HTTPException(503, detail={"status": "degraded", "database": str(exc)}) from exc
 
@@ -133,22 +185,22 @@ def health() -> dict[str, Any]:
 @app.get("/api/metrics")
 def metrics() -> dict[str, Any]:
     with connect() as conn:
-        total = conn.execute("SELECT count(*) AS total FROM crossing_events").fetchone()["total"]
+        total = conn.execute("SELECT count(*) AS total FROM crossing_events WHERE source=%s", (ACTIVE_SOURCE,)).fetchone()["total"]
         colors = conn.execute(
-            "SELECT color, count(*) AS count FROM crossing_events GROUP BY color ORDER BY color"
+            "SELECT color, count(*) AS count FROM crossing_events WHERE source=%s GROUP BY color ORDER BY color", (ACTIVE_SOURCE,)
         ).fetchall()
         directions = conn.execute(
-            "SELECT direction, count(*) AS count FROM crossing_events GROUP BY direction"
+            "SELECT direction, count(*) AS count FROM crossing_events WHERE source=%s GROUP BY direction", (ACTIVE_SOURCE,)
         ).fetchall()
     return {"total": total, "by_color": colors, "by_direction": directions,
-            "mode": "demo" if DEMO_MODE else "inference"}
+            "mode": ACTIVE_SOURCE}
 
 
 @app.get("/api/events")
 def events(limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM crossing_events ORDER BY occurred_at DESC, id DESC LIMIT %s", (limit,)
+            "SELECT * FROM crossing_events WHERE source=%s ORDER BY occurred_at DESC, id DESC LIMIT %s", (ACTIVE_SOURCE, limit)
         ).fetchall()
     return [dict(row) for row in rows]
 

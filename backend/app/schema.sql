@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS crossing_events (
     direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
     line_id TEXT NOT NULL DEFAULT 'gate-01',
     occurred_at TIMESTAMPTZ NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('simulated', 'deepstream'))
+    source TEXT NOT NULL CHECK (source IN ('simulated', 'opencv', 'deepstream'))
 );
 
 CREATE INDEX IF NOT EXISTS crossing_events_time_idx

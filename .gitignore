@@ -6,5 +6,6 @@ __pycache__/
 node_modules/
 frontend/dist/
 *.mp4
+models/*.onnx
 *.log
 .DS_Store
