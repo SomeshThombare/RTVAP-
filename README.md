@@ -137,10 +137,10 @@ This uses the supplied local clip and does not need a camera, MediaMTX, Docker, 
 4. In a third terminal, run the worker:
 
    ```powershell
-   .\.venv\Scripts\python.exe vision\worker.py --video .\mixkit-cars-driving-by-on-road-2022-hd-ready.mp4 --device-id 1 --line-orientation horizontal --line-ratio 0.5
+   .\.venv\Scripts\python.exe vision\worker.py --video .\mixkit-cars-driving-by-on-road-2022-hd-ready.mp4 --device-id 1 --line-orientation horizontal --line-ratio 0.34
    ```
 
-   It draws boxes, track IDs, estimated colors, and the count line, writes `output\opencv_annotated.mp4`, and posts each first crossing per track to `POST /api/events`. Use `--line-orientation horizontal` or change `--line-ratio` to place the line for the clip. The `in`/`out` labels follow the chosen line direction and are not a road-specific traffic direction until calibrated.
+   It draws boxes, track IDs, estimated colors, and the count line, writes `output\opencv_annotated.mp4`, and posts each first crossing per track to `POST /api/events`. For the supplied clip, the horizontal line at ratio `0.34` (about y=244 in its 720-pixel frame) yielded 12 crossing tracks in our calibration run; the model labeled 11 `car` and 1 `bus`. Adjust line placement for a different clip. The `in`/`out` labels follow the chosen line direction and are not a road-specific traffic direction until calibrated.
 
 5. Watch the dashboard's event table and counts update. The worker timestamps events from their frame offset relative to processing start because this MP4 has no live camera capture clock. Press Ctrl+C after processing. A useful live processing demonstration can use `--max-frames 1500` to stop after a subset; omit it to process the whole file.
 
