@@ -137,7 +137,7 @@ This uses the supplied local clip and does not need a camera, MediaMTX, Docker, 
 4. In a third terminal, run the worker:
 
    ```powershell
-   .\.venv\Scripts\python.exe vision\worker.py --video .\mixkit-cars-driving-by-on-road-2022-hd-ready.mp4 --device-id 1 --line-orientation vertical --line-ratio 0.5
+   .\.venv\Scripts\python.exe vision\worker.py --video .\mixkit-cars-driving-by-on-road-2022-hd-ready.mp4 --device-id 1 --line-orientation horizontal --line-ratio 0.5
    ```
 
    It draws boxes, track IDs, estimated colors, and the count line, writes `output\opencv_annotated.mp4`, and posts each first crossing per track to `POST /api/events`. Use `--line-orientation horizontal` or change `--line-ratio` to place the line for the clip. The `in`/`out` labels follow the chosen line direction and are not a road-specific traffic direction until calibrated.

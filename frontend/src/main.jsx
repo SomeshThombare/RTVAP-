@@ -31,7 +31,9 @@ function App() {
       setEvents((old) => [event, ...old.filter((row) => row.id !== event.id)].slice(0, 30));
       refresh();
     };
-    return () => source.close();
+    // Poll as a fallback so the dashboard still reflects database writes if SSE is unavailable.
+    const poll = window.setInterval(refresh, 5000);
+    return () => { source.close(); window.clearInterval(poll); };
   }, []);
   const palette = useMemo(() => Object.fromEntries(metrics.by_color.map((x) => [x.color, x.count])), [metrics]);
   const directions = Object.fromEntries(metrics.by_direction.map((x) => [x.direction, x.count]));
@@ -40,7 +42,7 @@ function App() {
   return <main className="shell">
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><Activity size={18}/></span><span>ROADWATCH<small>VISION SYSTEMS</small></span></a>
-      <div className="top-meta"><span className={`live-pill ${connected ? 'connected' : ''}`}><i/> {connected ? 'LIVE UPDATES' : 'CONNECTING'}</span><span className="divider"/><span className="camera-tag"><Radio size={14}/> CAM-01 <b>·</b> NORTH GATE</span></div>
+      <div className="top-meta"><span className={`live-pill ${connected || !error ? 'connected' : ''}`}><i/> {connected ? 'LIVE UPDATES' : error ? 'API OFFLINE' : 'API CONNECTED · POLLING'}</span><span className="divider"/><span className="camera-tag"><Radio size={14}/> CAM-01 <b>·</b> NORTH GATE</span></div>
       <button className="icon-button" onClick={refresh} title="Refresh dashboard"><RefreshCw size={16}/></button>
     </header>
 
@@ -51,7 +53,7 @@ function App() {
       <article className="metric-card total-card"><div className="card-label">TOTAL CROSSINGS <span className="card-icon"><CarFront size={16}/></span></div><div className="metric-number">{metrics.total.toLocaleString()}</div><div className="metric-foot"><span className="accent-chip"><Activity size={12}/> ALL TIME</span><span>Recorded events</span></div></article>
       <article className="metric-card"><div className="card-label">INBOUND <span className="direction-icon in"><ArrowDownLeft size={15}/></span></div><div className="metric-number">{(directions.in || 0).toLocaleString()}</div><div className="metric-foot"><span className="mini-line inbound"/><span>Crossed toward site</span></div></article>
       <article className="metric-card"><div className="card-label">OUTBOUND <span className="direction-icon out"><ArrowUpRight size={15}/></span></div><div className="metric-number">{(directions.out || 0).toLocaleString()}</div><div className="metric-foot"><span className="mini-line outbound"/><span>Crossed away from site</span></div></article>
-      <article className="metric-card network-card"><div className="card-label">STREAM STATUS <span className="card-icon"><Wifi size={15}/></span></div><div className="stream-state"><i className={connected ? 'on' : ''}/>{connected ? 'Connected' : 'Waiting for API'}</div><div className="metric-foot"><span className="camera-tag">RTSP <b>·</b> CAM-01</span></div></article>
+      <article className="metric-card network-card"><div className="card-label">API / LIVE FEED <span className="card-icon"><Wifi size={15}/></span></div><div className="stream-state"><i className={connected || !error ? 'on' : ''}/>{error ? 'Waiting for API' : connected ? 'Live updates connected' : 'API connected · polling'}</div><div className="metric-foot"><span className="camera-tag">RTSP <b>·</b> CAM-01</span></div></article>
     </section>
 
     <section className="content-grid">

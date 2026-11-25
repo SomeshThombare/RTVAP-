@@ -116,6 +116,7 @@ class VehicleDetector:
                 options = ort.SessionOptions()
                 options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
                 options.enable_mem_pattern = False
+                options.log_severity_level = 3
                 self.session = ort.InferenceSession(
                     str(model_path), options,
                     providers=[("DmlExecutionProvider", {"device_id": str(device_id)}),
@@ -368,7 +369,7 @@ def main() -> int:
         capture.release()
         writer.release()
         poster.close()
-    LOG.info("Finished %s frames; %s crossing events submitted; annotated video: %s",
+    LOG.info("Finished %s frames; detected %s crossings; annotated video: %s",
              frame_index, crossings, args.output)
     return 0
 

@@ -7,5 +7,6 @@ node_modules/
 frontend/dist/
 *.mp4
 models/*.onnx
+output/
 *.log
 .DS_Store
