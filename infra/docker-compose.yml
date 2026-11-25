@@ -1,4 +1,17 @@
 services:
+  api:
+    build:
+      context: ../backend
+    environment:
+      DATABASE_URL: postgresql://vehicle:vehicle_dev@postgres:5432/vehicle_analytics
+      DEMO_MODE: "true"
+      CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -6,7 +19,7 @@ services:
       POSTGRES_USER: vehicle
       POSTGRES_PASSWORD: vehicle_dev
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

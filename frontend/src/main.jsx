@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { Activity, ArrowDownLeft, ArrowUpRight, CarFront, CircleHelp, Radio, RefreshCw, Wifi } from 'lucide-react';
 import './style.css';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Use the Vite same-origin proxy so localhost and network-address browser tabs work.
+const API = import.meta.env.VITE_API_URL || '';
 const COLORS = ['white', 'black', 'silver', 'gray', 'blue', 'red'];
 const colorHex = { white: '#d9ddd8', black: '#555d58', silver: '#aab4b4', gray: '#808984', blue: '#72a9f5', red: '#f27866' };
 const fmt = (v) => new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(v));

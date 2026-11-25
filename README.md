@@ -30,39 +30,29 @@ The API and database are separated from the event source. A future DeepStream pr
 ### Main folders
 
 ```text
-backend/app/main.py       API, schema, demo event source, event persistence
+backend/app/main.py       API, demo event source, event persistence
+backend/app/schema.sql    PostgreSQL table and index definitions
 frontend/src/main.jsx     React dashboard and API/SSE client
 frontend/src/style.css    Responsive dashboard styling
-infra/docker-compose.yml  PostgreSQL and MediaMTX services
+infra/docker-compose.yml  API, PostgreSQL, and MediaMTX services
 ```
 
 ## Requirements and setup
 
 Installed tools observed on the development laptop include Python 3.10, Node.js 24, npm 11, Git, PostgreSQL client tools, and Docker CLI. The Docker Linux engine was **not running** when checked, and FFmpeg was not found. The NVIDIA card detected by `nvidia-smi` was a GeForce GTX 1650 with 4 GB VRAM. Windows hardware details and WSL state could not be fully checked in this session.
 
-### Start PostgreSQL and MediaMTX
+### Start the API, PostgreSQL, and MediaMTX
 
 Start Docker Desktop and wait until its Linux engine is ready. From the repository root:
 
 ```powershell
-docker compose -f infra/docker-compose.yml up -d
+docker compose -f infra/docker-compose.yml up -d --build
 docker compose -f infra/docker-compose.yml ps
 ```
 
-PostgreSQL is exposed on `localhost:5432`; MediaMTX RTSP is exposed on `rtsp://localhost:8554`. The Compose database credentials are for local development only. Do not reuse them in a deployed environment.
+PostgreSQL is exposed on `localhost:5433` (container port 5432); MediaMTX RTSP is exposed on `rtsp://localhost:8554`; the API is exposed on `http://localhost:8000`. Using host port 5433 avoids colliding with a PostgreSQL server already installed on Windows. Inside Compose, the API connects to the database by service name. The Compose database credentials are for local development only. Do not reuse them in a deployed environment. The API creates the prototype schema on startup. Visit `http://localhost:8000/api/health`, `http://localhost:8000/api/metrics`, and `http://localhost:8000/docs` to inspect it.
 
-### Start the API
-
-In a second PowerShell terminal, from the repository root:
-
-```powershell
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\requirements.txt
-python -m uvicorn app.main:app --app-dir backend --reload --port 8000
-```
-
-The API creates the prototype schema on startup. Visit `http://localhost:8000/api/health`, `http://localhost:8000/api/metrics`, and `http://localhost:8000/docs` to inspect it. The default database URL is `postgresql://vehicle:vehicle_dev@localhost:5432/vehicle_analytics`. Set `DATABASE_URL` before starting the API if your local database uses different credentials.
+For direct host execution instead of the API container, create a Python virtual environment, install `backend\requirements.txt`, set `$env:DATABASE_URL='postgresql://vehicle:vehicle_dev@localhost:5433/vehicle_analytics'`, and run `python -m uvicorn app.main:app --app-dir backend --reload --port 8000`.
 
 ### Start the React dashboard
 
@@ -75,6 +65,22 @@ npm run dev
 ```
 
 Open the Vite URL shown in the terminal (normally `http://localhost:5173`). The dashboard connects to `http://localhost:8000` by default. Set `VITE_API_URL` before starting Vite if the API is hosted elsewhere.
+
+### Run the prototype without Docker
+
+Docker is optional for the current simulated-event prototype. You need a native PostgreSQL **server** installed and running on Windows; having only the `psql` client is not enough. In pgAdmin, create a login role named `vehicle` with password `vehicle_dev`, then create database `vehicle_analytics` owned by `vehicle`. If the role/database already exist, update/check their password and owner rather than creating duplicates. The API's native default uses `localhost:5433`; if your PostgreSQL server listens on the usual port `5432`, set the URL as shown below.
+
+In a PowerShell terminal at the repository root:
+
+```powershell
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --default-timeout=120 --retries 5 -r backend\requirements.txt
+$env:DATABASE_URL = 'postgresql://vehicle:vehicle_dev@localhost:5432/vehicle_analytics'
+python -m uvicorn app.main:app --app-dir backend --reload --port 8000
+```
+
+Keep that terminal running. In another terminal, start the dashboard using the React instructions above. On API startup, the schema is created and simulated crossing events begin arriving. This route skips Docker and MediaMTX; it still demonstrates PostgreSQL-to-API-to-dashboard flow, but does not process camera video.
 
 To stop services:
 

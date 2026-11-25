@@ -15,6 +15,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -24,30 +25,14 @@ from fastapi.responses import StreamingResponse
 from psycopg.rows import dict_row
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://vehicle:vehicle_dev@localhost:5432/vehicle_analytics"
+    "DATABASE_URL", "postgresql://vehicle:vehicle_dev@localhost:5433/vehicle_analytics"
 )
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
 DEMO_SESSION = str(uuid.uuid5(uuid.NAMESPACE_DNS, "vehicle-analytics-prototype-demo"))
 COLORS = ["white", "black", "silver", "gray", "blue", "red"]
 VEHICLE_CLASSES = ["car", "truck", "bus", "motorcycle"]
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS crossing_events (
-    id BIGSERIAL PRIMARY KEY,
-    event_key TEXT NOT NULL UNIQUE,
-    camera_id TEXT NOT NULL DEFAULT 'camera-01',
-    session_id UUID NOT NULL,
-    vehicle_id TEXT NOT NULL,
-    vehicle_class TEXT NOT NULL,
-    color TEXT NOT NULL,
-    direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
-    line_id TEXT NOT NULL DEFAULT 'gate-01',
-    occurred_at TIMESTAMPTZ NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('simulated', 'deepstream'))
-);
-CREATE INDEX IF NOT EXISTS crossing_events_time_idx ON crossing_events (occurred_at DESC);
-CREATE INDEX IF NOT EXISTS crossing_events_color_time_idx ON crossing_events (color, occurred_at DESC);
-"""
+SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
 
 
 def connect() -> psycopg.Connection:
